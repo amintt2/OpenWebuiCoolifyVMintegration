@@ -1,8 +1,19 @@
 """
-# LLM Virtual Machine Controller for OpenWebUI with Coolify Integration
+# OpenWebUI VM Controller with Coolify Integration
 
-This module provides a sandboxed VM environment for LLMs to interact with using Docker containers
+This module provides a sandboxed VM environment for OpenWebUI to interact with using Docker containers
 managed through Coolify.
+
+Environment Variables Required:
+------------------------------
+COOLIFY_URL="https://your-coolify-instance.com"
+COOLIFY_API_KEY="your-api-key"
+COOLIFY_PROJECT_ID="your-project-id"
+MEMORY_LIMIT="2048m"
+CPU_LIMIT="1.0"
+COMMAND_TIMEOUT="3600"
+VM_PORT="8080"              # Port the VM API will listen on
+HOST_PORT="8081"           # Port exposed on the host machine
 
 ## Setup Instructions
 
@@ -13,24 +24,12 @@ managed through Coolify.
 
 ### Coolify Configuration:
 1. Ensure Coolify API access is configured
-2. Create a dedicated project for LLM VMs in Coolify
+2. Create a dedicated project for VMs in Coolify
 
-### Quick Configuration Variables:
-Edit these variables in the LLMVirtualMachineController class initialization:
-
-- base_image: Docker image (default: "ubuntu:22.04")
-- memory_limit: Memory allocation (default: "2048m")
-- cpu_limit: CPU usage limit (default: 1.0 = 100% of one CPU)
-- timeout_seconds: Maximum execution time (default: 3600 seconds)
-- allowed_commands: List of permitted commands
-- coolify_url: URL of your Coolify instance (e.g., "https://mciut.fr")
-- coolify_api_key: Your Coolify API key for authentication
-- coolify_project_id: ID of the Coolify project to use
-
-### Integration with OpenWebUI:
-1. Import this module in your OpenWebUI plugin
-2. Use the handle_llm_vm_request function to process LLM requests
-3. Map OpenWebUI actions to controller methods
+### Production Deployment:
+1. Create a .env file based on .env.example with your actual credentials
+2. Never commit the .env file to version control
+3. Consider using a secrets management solution for sensitive variables
 
 ### Security Considerations:
 - All VMs run in network isolation mode by default
@@ -38,17 +37,16 @@ Edit these variables in the LLMVirtualMachineController class initialization:
 - Command execution is limited to the allowed_commands list
 - Resources are constrained by memory and CPU limits
 - All containers are automatically removed when stopped
-
-## Usage Example:
 """
 
 import os
-import subprocess
 import json
 import logging
+import requests
 from typing import Dict, List, Optional, Any
 import docker
 import time
+from functools import lru_cache
 
 # Configure logging
 logging.basicConfig(
@@ -56,23 +54,73 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
-logger = logging.getLogger("LLM-VM-Controller")
+logger = logging.getLogger("OpenWebUI-VM-Controller")
 
-class LLMVirtualMachineController:
+@lru_cache(maxsize=1)
+def get_config() -> Dict[str, Any]:
+    """Get configuration from environment variables."""
+    # Load configuration from environment variables
+    # In production, these should be set in the .env file which is not committed to version control
+    return {
+        'coolify_url': os.getenv('COOLIFY_URL'),
+        'coolify_api_key': os.getenv('COOLIFY_API_KEY'),
+        'coolify_project_id': os.getenv('COOLIFY_PROJECT_ID'),
+        'memory_limit': os.getenv('MEMORY_LIMIT', '2048m'),
+        'cpu_limit': float(os.getenv('CPU_LIMIT', '1.0')),
+        'timeout': int(os.getenv('COMMAND_TIMEOUT', '3600')),
+        'vm_port': int(os.getenv('VM_PORT', '8080')),
+        'host_port': int(os.getenv('HOST_PORT', '8081')),
+        'repo_url': os.getenv('REPO_URL', 'https://github.com/amintt2/OpenWebui.git'),
+        'repo_branch': os.getenv('REPO_BRANCH', 'main')
+    }
+
+def tool_specification():
+    """OpenWebUI tool specification"""
+    return {
+        "name": "ubuntu-vm",
+        "description": "Provides access to a sandboxed Ubuntu VM for executing commands and running code",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["start", "stop", "execute", "write_file", "read_file", "install"],
+                    "description": "Action to perform in the VM"
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Command to execute (for 'execute' action)"
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to file (for file operations)"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Content to write (for 'write_file' action)"
+                },
+                "package": {
+                    "type": "string",
+                    "description": "Package name to install (for 'install' action)"
+                }
+            },
+            "required": ["action"]
+        }
+    }
+
+class VMController:
     """
-    A controller class that provides a sandboxed VM environment for LLMs to interact with.
+    A controller class that provides a sandboxed VM environment for OpenWebUI to interact with.
     This uses Docker containers as lightweight VMs for isolation and security.
     """
     
     def __init__(self, 
                  base_image: str = "ubuntu:22.04", 
-                 memory_limit: str = "2048m",
-                 cpu_limit: float = 1.0,
-                 timeout_seconds: int = 3600,
+                 memory_limit: Optional[str] = None,
+                 cpu_limit: Optional[float] = None,
+                 timeout_seconds: Optional[int] = None,
                  allowed_commands: Optional[List[str]] = None,
-                 coolify_url: Optional[str] = None,
-                 coolify_api_key: Optional[str] = None,
-                 coolify_project_id: Optional[str] = None):
+                 session_id: Optional[str] = None):
         """
         Initialize the VM controller with configurable constraints.
         
@@ -82,20 +130,31 @@ class LLMVirtualMachineController:
             cpu_limit: CPU usage limit (1.0 = 100% of one CPU)
             timeout_seconds: Maximum execution time before termination
             allowed_commands: List of commands that are allowed to be executed
-            coolify_url: URL of your Coolify instance
-            coolify_api_key: Your Coolify API key for authentication
-            coolify_project_id: ID of the Coolify project to use
+            session_id: Unique session identifier
         """
+        # Get configuration from environment
+        config = get_config()
+        
         self.base_image = base_image
-        self.memory_limit = memory_limit
-        self.cpu_limit = cpu_limit
-        self.timeout_seconds = timeout_seconds
-        self.allowed_commands = allowed_commands or ["ls", "cat", "echo", "python", "pip", "apt-get", "apt", "apt-get install", "apt-get update", "apt-get upgrade", "apt-get remove", "apt-get purge", "apt-get autoremove", "apt-get clean", "cd", "mkdir", "rm", "rm -rf", "cp", "mv", "chmod", "chown", "chgrp", "ln", "touch", "date", "sleep", "kill", "kill -9", "kill -15", "kill -1", "kill -2", "kill -3", "kill -4", "kill -5", "kill -6", "kill -7", "kill -8", "kill -9"]
+        self.memory_limit = memory_limit or config['memory_limit']
+        self.cpu_limit = cpu_limit or config['cpu_limit']
+        self.timeout_seconds = timeout_seconds or config['timeout']
+        self.allowed_commands = allowed_commands or [
+            "ls", "cat", "echo", "python", "pip", "apt-get", "apt", 
+            "cd", "mkdir", "rm", "cp", "mv", "chmod", "touch", "date", 
+            "grep", "find", "curl", "wget", "git"
+        ]
         
         # Coolify configuration
-        self.coolify_url = coolify_url
-        self.coolify_api_key = coolify_api_key
-        self.coolify_project_id = coolify_project_id
+        self.coolify_url = config['coolify_url']
+        self.coolify_api_key = config['coolify_api_key']
+        self.coolify_project_id = config['coolify_project_id']
+        self.vm_port = config['vm_port']
+        self.host_port = config['host_port']
+        
+        # Session management
+        self.session_id = session_id or os.getenv('OPENWEBUI_SESSION_ID', 'default')
+        self.container_name = f"openwebui-vm-{self.session_id}"
         
         # Initialize Docker client
         try:
@@ -108,6 +167,9 @@ class LLMVirtualMachineController:
         # Container reference
         self.container = None
         self.container_id = None
+        
+        # API endpoint
+        self.vm_api_url = f"http://localhost:{self.host_port}/api/v1"
 
     def start_vm(self) -> Dict[str, Any]:
         """
@@ -117,24 +179,46 @@ class LLMVirtualMachineController:
             Dict containing status and container information
         """
         try:
+            # Check if container already exists
+            try:
+                existing = self.docker_client.containers.get(self.container_name)
+                logger.info(f"Container {self.container_name} already exists, reusing")
+                self.container = existing
+                self.container_id = existing.id
+                return {
+                    "status": "success",
+                    "container_id": self.container_id,
+                    "message": "VM already running"
+                }
+            except docker.errors.NotFound:
+                pass
+                
             # Create and start the container
             self.container = self.docker_client.containers.run(
                 self.base_image,
-                command="tail -f /dev/null",  # Keep container running
                 detach=True,
                 mem_limit=self.memory_limit,
-                nano_cpus=int(self.cpu_limit * 1e9),  # Convert to nano CPUs
-                network_mode="none",  # Isolate network
-                remove=True,  # Auto-remove when stopped
-                working_dir="/workspace",
-                labels={"managed-by": "coolify", "llm-vm": "true"}  # Add Coolify compatible labels
+                nano_cpus=int(float(self.cpu_limit) * 1e9),
+                ports={f"{self.vm_port}/tcp": self.host_port},
+                name=self.container_name,
+                labels={
+                    "managed-by": "coolify",
+                    "project": self.coolify_project_id,
+                    "openwebui-vm": "true"
+                }
             )
             
             self.container_id = self.container.id
             logger.info(f"VM started with container ID: {self.container_id}")
             
-            # Create workspace directory
-            self.execute_command("mkdir -p /workspace")
+            # Wait for API to be ready
+            for _ in range(10):
+                try:
+                    response = requests.get(f"{self.vm_api_url}/health")
+                    if response.status_code == 200:
+                        break
+                except:
+                    time.sleep(1)
             
             return {
                 "status": "success",
@@ -156,10 +240,20 @@ class LLMVirtualMachineController:
         Returns:
             Dict containing status and message
         """
-        if not self.container:
-            return {"status": "error", "message": "No VM is currently running"}
-        
         try:
+            # Send shutdown signal to API first
+            try:
+                requests.post(f"{self.vm_api_url}/shutdown")
+            except:
+                pass
+                
+            # Get container if not already referenced
+            if not self.container:
+                try:
+                    self.container = self.docker_client.containers.get(self.container_name)
+                except docker.errors.NotFound:
+                    return {"status": "success", "message": "No VM is currently running"}
+            
             self.container.stop()
             logger.info(f"VM with container ID {self.container_id} stopped")
             self.container = None
@@ -179,37 +273,19 @@ class LLMVirtualMachineController:
         Returns:
             Dict containing status, output, and error information
         """
-        if not self.container:
-            return {"status": "error", "message": "No VM is currently running"}
-        
-        # Basic command validation
-        command_parts = command.split()
-        base_command = command_parts[0] if command_parts else ""
-        
-        if base_command not in self.allowed_commands:
-            return {
-                "status": "error", 
-                "message": f"Command '{base_command}' is not allowed. Allowed commands: {', '.join(self.allowed_commands)}"
-            }
-        
+        # Send command to VM API
         try:
-            # Execute with timeout
-            exec_result = self.container.exec_run(
-                cmd=command,
-                workdir="/workspace",
-                demux=True
+            response = requests.post(
+                f"{self.vm_api_url}/execute",
+                json={"command": command},
+                timeout=self.timeout_seconds
             )
-            
-            stdout = exec_result.output[0].decode('utf-8') if exec_result.output[0] else ""
-            stderr = exec_result.output[1].decode('utf-8') if exec_result.output[1] else ""
-            
+            result = response.json()
             return {
-                "status": "success" if exec_result.exit_code == 0 else "error",
-                "exit_code": exec_result.exit_code,
-                "stdout": stdout,
-                "stderr": stderr
+                "status": "success",
+                "output": result.get("output", ""),
+                "exit_code": result.get("exit_code", -1)
             }
-            
         except Exception as e:
             logger.error(f"Command execution failed: {e}")
             return {
@@ -228,33 +304,15 @@ class LLMVirtualMachineController:
         Returns:
             Dict containing status and message
         """
-        if not self.container:
-            return {"status": "error", "message": "No VM is currently running"}
-        
-        # Ensure the file path is within /workspace for security
-        if not file_path.startswith("/workspace/"):
-            file_path = os.path.join("/workspace", file_path)
-        
         try:
-            # Create a temporary file locally
-            with open("temp_file", "w") as f:
-                f.write(content)
-            
-            # Copy the file to the container
-            with open("temp_file", "rb") as f:
-                self.container.put_archive(
-                    path=os.path.dirname(file_path),
-                    data=f.read()
-                )
-            
-            # Remove the temporary file
-            os.remove("temp_file")
-            
-            return {
-                "status": "success",
-                "message": f"File written to {file_path}"
-            }
-            
+            response = requests.post(
+                f"{self.vm_api_url}/write_file",
+                json={
+                    "path": file_path,
+                    "content": content
+                }
+            )
+            return response.json()
         except Exception as e:
             logger.error(f"Failed to write file: {e}")
             return {
@@ -272,28 +330,12 @@ class LLMVirtualMachineController:
         Returns:
             Dict containing status, content, and message
         """
-        if not self.container:
-            return {"status": "error", "message": "No VM is currently running"}
-        
-        # Ensure the file path is within /workspace for security
-        if not file_path.startswith("/workspace/"):
-            file_path = os.path.join("/workspace", file_path)
-        
         try:
-            result = self.execute_command(f"cat {file_path}")
-            
-            if result["status"] == "success":
-                return {
-                    "status": "success",
-                    "content": result["stdout"],
-                    "message": f"File {file_path} read successfully"
-                }
-            else:
-                return {
-                    "status": "error",
-                    "message": f"Failed to read file: {result.get('stderr', '')}"
-                }
-                
+            response = requests.get(
+                f"{self.vm_api_url}/read_file",
+                params={"path": file_path}
+            )
+            return response.json()
         except Exception as e:
             logger.error(f"Failed to read file: {e}")
             return {
@@ -311,30 +353,12 @@ class LLMVirtualMachineController:
         Returns:
             Dict containing status and message
         """
-        if not self.container:
-            return {"status": "error", "message": "No VM is currently running"}
-        
-        # Basic package name validation
-        if not package_name.isalnum() and not all(c in ".-_" for c in package_name if not c.isalnum()):
-            return {
-                "status": "error",
-                "message": f"Invalid package name: {package_name}"
-            }
-        
         try:
-            result = self.execute_command(f"pip install --no-cache-dir {package_name}")
-            
-            if result["status"] == "success":
-                return {
-                    "status": "success",
-                    "message": f"Package {package_name} installed successfully"
-                }
-            else:
-                return {
-                    "status": "error",
-                    "message": f"Failed to install package: {result.get('stderr', '')}"
-                }
-                
+            response = requests.post(
+                f"{self.vm_api_url}/install",
+                json={"package": package_name}
+            )
+            return response.json()
         except Exception as e:
             logger.error(f"Failed to install package: {e}")
             return {
@@ -342,8 +366,7 @@ class LLMVirtualMachineController:
                 "message": f"Failed to install package: {str(e)}"
             }
 
-# Example OpenWebUI tool integration function
-def handle_llm_vm_request(request_data: Dict[str, Any]) -> Dict[str, Any]:
+def handle_vm_request(request_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Handle requests from OpenWebUI to the VM controller.
     
@@ -354,68 +377,63 @@ def handle_llm_vm_request(request_data: Dict[str, Any]) -> Dict[str, Any]:
         Dict containing response data
     """
     action = request_data.get("action")
-    params = request_data.get("params", {})
     
-    # Get or create controller instance
-    # In a real implementation, you'd need to manage instances per user/session
-    controller = LLMVirtualMachineController()
+    # Create controller instance
+    controller = VMController()
     
-    if action == "start_vm":
+    if action == "start":
         return controller.start_vm()
     
-    elif action == "stop_vm":
+    elif action == "stop":
         return controller.stop_vm()
     
-    elif action == "execute_command":
-        command = params.get("command")
+    elif action == "execute":
+        command = request_data.get("command")
         if not command:
             return {"status": "error", "message": "No command provided"}
         return controller.execute_command(command)
     
     elif action == "write_file":
-        file_path = params.get("file_path")
-        content = params.get("content")
+        file_path = request_data.get("file_path")
+        content = request_data.get("content")
         if not file_path or content is None:
             return {"status": "error", "message": "File path or content missing"}
         return controller.write_file(file_path, content)
     
     elif action == "read_file":
-        file_path = params.get("file_path")
+        file_path = request_data.get("file_path")
         if not file_path:
             return {"status": "error", "message": "File path missing"}
         return controller.read_file(file_path)
     
-    elif action == "install_package":
-        package_name = params.get("package_name")
-        if not package_name:
+    elif action == "install":
+        package = request_data.get("package")
+        if not package:
             return {"status": "error", "message": "Package name missing"}
-        return controller.install_package(package_name)
+        return controller.install_package(package)
     
     else:
         return {"status": "error", "message": f"Unknown action: {action}"}
 
 # Example usage
 if __name__ == "__main__":
-    # This would be called by OpenWebUI in a real implementation
+    # Example request to start a VM
     example_request = {
-        "action": "start_vm",
-        "params": {}
+        "action": "start"
     }
     
-    response = handle_llm_vm_request(example_request)
+    response = handle_vm_request(example_request)
     print(json.dumps(response, indent=2))
     
     # Example command execution
     if response["status"] == "success":
         example_command = {
-            "action": "execute_command",
-            "params": {
-                "command": "echo 'Hello from the VM!'"
-            }
+            "action": "execute",
+            "command": "echo 'Hello from the VM!'"
         }
         
-        command_response = handle_llm_vm_request(example_command)
+        command_response = handle_vm_request(example_command)
         print(json.dumps(command_response, indent=2))
         
         # Clean up
-        handle_llm_vm_request({"action": "stop_vm"}) 
+        handle_vm_request({"action": "stop"}) 

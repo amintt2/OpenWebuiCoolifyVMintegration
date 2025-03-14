@@ -1,44 +1,61 @@
 version: '3.8'
 
+# Production deployment note:
+# This docker-compose file uses environment variables from the .env file
+# Make sure to create a .env file based on .env.example before deployment
+# Never commit your actual .env file to version control
+
 services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: llm-vm-backend
+      args:
+        - REPO_URL=${REPO_URL}
+        - REPO_BRANCH=${REPO_BRANCH}
+    container_name: openwebui-backend
     restart: unless-stopped
     environment:
-      - VM_PORT=8080
-      - COOLIFY_URL=${COOLIFY_URL}
-      - COOLIFY_API_KEY=${COOLIFY_API_KEY}
-      - COOLIFY_PROJECT_ID=${COOLIFY_PROJECT_ID}
-      - DOCKER_MEMORY_LIMIT=${DOCKER_MEMORY_LIMIT:-2048m}
-      - DOCKER_CPU_LIMIT=${DOCKER_CPU_LIMIT:-1.0}
-      - COMMAND_TIMEOUT=${COMMAND_TIMEOUT:-3600}
+      - VM_PORT=${VM_PORT}
+      - WORKSPACE_DIR=${WORKSPACE_DIR}
+      - API_HOST=${API_HOST}
+      - API_TIMEOUT=${API_TIMEOUT}
+      - ENABLE_AUTH=${ENABLE_AUTH}
+      - LOG_LEVEL=${LOG_LEVEL}
     ports:
-      - "${HOST_PORT:-8081}:8080"
+      - "${VM_PORT}:${VM_PORT}"  # Local port for the backend API
     volumes:
-      - vm_workspace:/workspace
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - workspace_data:${WORKSPACE_DIR}
     networks:
-      - llm_vm_network
+      - openwebui_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${COOLIFY_HEALTHCHECK_PORT}${COOLIFY_HEALTHCHECK_PATH}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT}
+          cpus: ${CPU_LIMIT}
     labels:
       coolify.managed: "true"
       coolify.version: "1"
       coolify.type: "app"
-      coolify.name: "LLM VM Backend"
-      coolify.description: "Ubuntu VM environment for LLM interactions"
+      coolify.name: "OpenWebUI Backend"
+      coolify.description: "Ubuntu VM environment for OpenWebUI"
       coolify.deployment.strategy: "rolling"
       coolify.healthcheck: "true"
-      coolify.healthcheck.path: "/api/v1/health"
-      coolify.healthcheck.port: "8080"
+      coolify.healthcheck.path: "${COOLIFY_HEALTHCHECK_PATH}"
+      coolify.healthcheck.port: "${COOLIFY_HEALTHCHECK_PORT}"
       coolify.logs: "true"
 
 networks:
-  llm_vm_network:
-    name: llm_vm_network
+  openwebui_network:
+    name: openwebui_network
     driver: bridge
 
 volumes:
-  vm_workspace:
-    name: llm_vm_workspace 
+  workspace_data:
+    name: openwebui_workspace 
