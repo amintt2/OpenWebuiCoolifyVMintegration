@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: llm-vm-backend
+    restart: unless-stopped
+    environment:
+      - VM_PORT=8080
+      - COOLIFY_URL=${COOLIFY_URL}
+      - COOLIFY_API_KEY=${COOLIFY_API_KEY}
+      - COOLIFY_PROJECT_ID=${COOLIFY_PROJECT_ID}
+      - DOCKER_MEMORY_LIMIT=${DOCKER_MEMORY_LIMIT:-2048m}
+      - DOCKER_CPU_LIMIT=${DOCKER_CPU_LIMIT:-1.0}
+      - COMMAND_TIMEOUT=${COMMAND_TIMEOUT:-3600}
+    ports:
+      - "${HOST_PORT:-8081}:8080"
+    volumes:
+      - vm_workspace:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - llm_vm_network
+    labels:
+      coolify.managed: "true"
+      coolify.version: "1"
+      coolify.type: "app"
+      coolify.name: "LLM VM Backend"
+      coolify.description: "Ubuntu VM environment for LLM interactions"
+      coolify.deployment.strategy: "rolling"
+      coolify.healthcheck: "true"
+      coolify.healthcheck.path: "/api/v1/health"
+      coolify.healthcheck.port: "8080"
+      coolify.logs: "true"
+
+networks:
+  llm_vm_network:
+    name: llm_vm_network
+    driver: bridge
+
+volumes:
+  vm_workspace:
+    name: llm_vm_workspace 
