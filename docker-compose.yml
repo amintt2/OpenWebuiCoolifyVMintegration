@@ -22,6 +22,7 @@ services:
       - API_TIMEOUT=${API_TIMEOUT}
       - ENABLE_AUTH=${ENABLE_AUTH}
       - LOG_LEVEL=${LOG_LEVEL}
+      - PUBLIC_URL=${PUBLIC_URL}
     ports:
       - "${VM_PORT}:${VM_PORT}"  # Local port for the backend API
     volumes:
@@ -50,6 +51,7 @@ services:
       coolify.healthcheck.path: "${COOLIFY_HEALTHCHECK_PATH}"
       coolify.healthcheck.port: "${COOLIFY_HEALTHCHECK_PORT}"
       coolify.logs: "true"
+      coolify.publicUrl: "${PUBLIC_URL}"
 
 networks:
   openwebui_network:
@@ -58,4 +60,4 @@ networks:
 
 volumes:
   workspace_data:
-    name: openwebui_workspace 
+    name: openwebui_workspace
