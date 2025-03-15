@@ -11,18 +11,18 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       args:
-        - REPO_URL=${REPO_URL}
-        - REPO_BRANCH=${REPO_BRANCH}
+        - REPO_URL=${REPO_URL:-https://github.com/open-webui/open-webui.git}
+        - REPO_BRANCH=${REPO_BRANCH:-main}
     container_name: openwebui-backend
     restart: unless-stopped
     environment:
-      - VM_PORT=${VM_PORT}
-      - WORKSPACE_DIR=${WORKSPACE_DIR}
-      - API_HOST=${API_HOST}
-      - API_TIMEOUT=${API_TIMEOUT}
-      - ENABLE_AUTH=${ENABLE_AUTH}
-      - LOG_LEVEL=${LOG_LEVEL}
-      - PUBLIC_URL=${PUBLIC_URL}
+      - VM_PORT=${VM_PORT:-8080}
+      - WORKSPACE_DIR=${WORKSPACE_DIR:-/workspace}
+      - API_HOST=${API_HOST:-0.0.0.0}
+      - API_TIMEOUT=${API_TIMEOUT:-300}
+      - ENABLE_AUTH=${ENABLE_AUTH:-false}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8080}
     ports:
       - "${VM_PORT}:${VM_PORT}"  # Local port for the backend API
     volumes:
@@ -38,8 +38,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${MEMORY_LIMIT}
-          cpus: ${CPU_LIMIT}
+          memory: ${MEMORY_LIMIT:-2g}
+          cpus: ${CPU_LIMIT:-2}
     labels:
       coolify.managed: "true"
       coolify.version: "1"
