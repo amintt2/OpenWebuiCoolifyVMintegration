@@ -45,18 +45,11 @@ services:
         limits:
           memory: ${MEMORY_LIMIT:-2g}
           cpus: ${CPU_LIMIT:-2}
-    labels:
-      coolify.managed: "true"
-      coolify.version: "1"
-      coolify.type: "app"
-      coolify.name: "OpenWebUI Backend"
-      coolify.description: "Ubuntu VM environment for OpenWebUI"
-      coolify.deployment.strategy: "rolling"
-      coolify.healthcheck: "true"
-      "coolify.healthcheck.path": "${COOLIFY_HEALTHCHECK_PATH}"
-      "coolify.healthcheck.port": "${COOLIFY_HEALTHCHECK_PORT}"
-      coolify.logs: "true"
-      coolify.publicUrl: "${PUBLIC_URL}"
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
 
 networks:
   openwebui_network:
