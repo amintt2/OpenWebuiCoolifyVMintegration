@@ -22,18 +22,20 @@ services:
       - API_TIMEOUT=${API_TIMEOUT:-300}
       - ENABLE_AUTH=${ENABLE_AUTH:-false}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8080}
+      - SERVICE_FQDN_OPENWEBUI_8080
+      - PUBLIC_URL=${SERVICE_FQDN_OPENWEBUI}
       - THEME=${THEME:-light}
       - CUSTOM_BUILD_COMMAND=${CUSTOM_BUILD_COMMAND:-docker compose build}
       - CUSTOM_START_COMMAND=${CUSTOM_START_COMMAND:-docker compose up -d}
+      - SERVICE_PASSWORD_OPENWEBUI
     ports:
-      - "${VM_PORT}:${VM_PORT}"  # Local port for the backend API
+      - "${VM_PORT}:${VM_PORT}"
     volumes:
       - workspace_data:${WORKSPACE_DIR}
     networks:
       - openwebui_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${COOLIFY_HEALTHCHECK_PORT:-8080}${COOLIFY_HEALTHCHECK_PATH:-/api/v1/health}"]
+      test: ["CMD", "curl", "-f", "http://localhost:${VM_PORT}/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
