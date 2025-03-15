@@ -30,7 +30,7 @@ services:
     networks:
       - openwebui_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${COOLIFY_HEALTHCHECK_PORT}${COOLIFY_HEALTHCHECK_PATH}"]
+      test: ["CMD", "curl", "-f", "http://localhost:${COOLIFY_HEALTHCHECK_PORT:-8080}${COOLIFY_HEALTHCHECK_PATH:-/api/v1/health}"]
       interval: 30s
       timeout: 10s
       retries: 3
