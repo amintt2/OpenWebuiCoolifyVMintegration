@@ -53,8 +53,8 @@ services:
       coolify.description: "Ubuntu VM environment for OpenWebUI"
       coolify.deployment.strategy: "rolling"
       coolify.healthcheck: "true"
-      coolify.healthcheck.path: "${COOLIFY_HEALTHCHECK_PATH}"
-      coolify.healthcheck.port: "${COOLIFY_HEALTHCHECK_PORT}"
+      "coolify.healthcheck.path": "${COOLIFY_HEALTHCHECK_PATH}"
+      "coolify.healthcheck.port": "${COOLIFY_HEALTHCHECK_PORT}"
       coolify.logs: "true"
       coolify.publicUrl: "${PUBLIC_URL}"
 
