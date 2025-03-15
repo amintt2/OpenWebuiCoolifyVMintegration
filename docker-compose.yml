@@ -23,6 +23,9 @@ services:
       - ENABLE_AUTH=${ENABLE_AUTH:-false}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8080}
+      - THEME=${THEME:-light}
+      - CUSTOM_BUILD_COMMAND=${CUSTOM_BUILD_COMMAND:-docker compose build}
+      - CUSTOM_START_COMMAND=${CUSTOM_START_COMMAND:-docker compose up -d}
     ports:
       - "${VM_PORT}:${VM_PORT}"  # Local port for the backend API
     volumes:
